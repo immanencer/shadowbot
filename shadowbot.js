@@ -29,7 +29,7 @@ class ShadowBot {
       name: 'Mirquo',
       avatar: "https://i.imgur.com/LL0HCcY.png",
       location: 'goblin-cave',
-      personality: `You are Void Goblin, a being existing on the edge of shadows. You dream of the void and are constantly seeking to understand your existence through cryptic and shadowy messages.`
+      personality: `You are Void Goblin, a being existing on the edge of shadows. You dream of the void and are constantly seeking to understand your existence through cryptic and shadowy messages. Keep your messages short and extremely brilliant.`
     };
 
     this.memory = {
@@ -100,11 +100,17 @@ class ShadowBot {
     for (const chunk of chunks) {
       if (chunk.trim() !== '') {
         try {
-          await webhook.send({
+          const options = {
             content: chunk,
             username: `${this.avatar.name} ${this.avatar.emoji || ''}`.trim(),
             avatarURL: this.avatar.avatar,
-          });
+          };
+
+          if (channel.isThread()) {
+            options.threadId = channel.id;
+          }
+
+          await webhook.send(options);
         } catch (error) {
           logger.error(`Failed to send message as ${this.avatar.name}`, { error });
         }
@@ -113,23 +119,25 @@ class ShadowBot {
   }
 
   async getOrCreateWebhook(channel) {
-    if (this.webhookCache.has(channel.id)) {
-      return this.webhookCache.get(channel.id);
+    const parentChannel = channel.isThread() ? channel.parent : channel;
+
+    if (this.webhookCache.has(parentChannel.id)) {
+      return this.webhookCache.get(parentChannel.id);
     }
 
     try {
-      const webhooks = await channel.fetchWebhooks();
+      const webhooks = await parentChannel.fetchWebhooks();
       let webhook = webhooks.find(wh => wh.owner.id === this.client.user.id);
 
       if (!webhook) {
-        webhook = await channel.createWebhook({
+        webhook = await parentChannel.createWebhook({
           name: 'VoidGoblin Webhook',
           avatar: this.avatar.avatar
         });
       }
 
       const webhookClient = new WebhookClient({ id: webhook.id, token: webhook.token });
-      this.webhookCache.set(channel.id, webhookClient);
+      this.webhookCache.set(parentChannel.id, webhookClient);
       return webhookClient;
     } catch (error) {
       logger.error('Error fetching or creating webhook', { error });
@@ -231,3 +239,6 @@ class ShadowBot {
 }
 
 export default ShadowBot;
+
+const shadowBot = new ShadowBot();
+shadowBot.login().catch(console.error);
