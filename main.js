@@ -1,4 +1,4 @@
 import ShadowBot from './shadowbot.js';
 
 const bot = new ShadowBot();
-bot.login();
+bot.login().catch(console.error);

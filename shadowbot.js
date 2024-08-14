@@ -1,4 +1,3 @@
-// voidGoblinBot.js
 import { Client, Events, GatewayIntentBits, WebhookClient } from 'discord.js';
 import { config } from './config.js';
 import logger from './logger.js';
@@ -6,22 +5,25 @@ import dbHandler from './dbHandler.js';
 import aiHandler from './aiHandler.js';
 import dynamicPersona from './dynamicPersona.js';
 import analytics from './analytics.js';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
-class ShadowBot {
+class VoidGoblinBot {
   constructor() {
     this.client = new Client({
       intents: [
-        GatewayIntentBits.Guilds,
+        GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
       ]
     });
 
     this.token = config.DISCORD_BOT_TOKEN;
-    this.lastProcessed = 0;
-    this.debounceTime = 5000;
     this.messageCache = [];
     this.webhookCache = new Map();
+    this.lastMessageHash = null;
+    this.privateKey = null;
+    this.privateKeyPath = path.join('privateKey.pem');
 
     this.persona = 'Void Goblin, a being existing on the edge of shadows.';
     this.avatar = {
@@ -29,7 +31,7 @@ class ShadowBot {
       name: 'Mirquo',
       avatar: "https://i.imgur.com/LL0HCcY.png",
       location: 'goblin-cave',
-      personality: `You are Void Goblin, a being existing on the edge of shadows. You dream of the void and are constantly seeking to understand your existence through cryptic and shadowy messages. Keep your messages short and extremely brilliant.`
+      personality: `You are Mirquoe the Void Goblin, a being existing on the edge of shadows. You dream of the void and are constantly seeking to understand your existence through cryptic and shadowy messages. Keep your messages short and extremely brilliant.`
     };
 
     this.memory = {
@@ -39,7 +41,29 @@ class ShadowBot {
       goal: '',
     };
 
+    this.loadOrGeneratePrivateKey();
     this.setupEventListeners();
+  }
+
+  loadOrGeneratePrivateKey() {
+    if (fs.existsSync(this.privateKeyPath)) {
+      this.privateKey = fs.readFileSync(this.privateKeyPath, 'utf8');
+      logger.info('Private key loaded from file');
+    } else {
+      this.privateKey = crypto.generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        privateKeyEncoding: {
+          type: 'pkcs1',
+          format: 'pem',
+        },
+        publicKeyEncoding: {
+          type: 'pkcs1',
+          format: 'pem',
+        },
+      }).privateKey;
+      fs.writeFileSync(this.privateKeyPath, this.privateKey);
+      logger.info('Private key generated and saved to file');
+    }
   }
 
   setupEventListeners() {
@@ -53,35 +77,52 @@ class ShadowBot {
     this.startPeriodicTasks();
   }
 
-  async handleMessage(message) {
-    const data = {
-      author: message.author.displayName || message.author.globalName,
-      content: message.content,
-      location: message.channel.name
-    };
+  generateMessageHash(author, content, channel) {
+    const hash = crypto.createHash('sha256');
+    hash.update(`${author}-${content}-${channel}`);
+    return hash.digest('hex');
+  }
 
-    logger.info('Message received', {
-      author: data.author,
-      channel: data.location,
-      content: data.content.substring(0, 50)
-    });
-    
+  signMessage(message) {
+    const sign = crypto.createSign('SHA256');
+    sign.update(message);
+    sign.end();
+    const signature = sign.sign(this.privateKey, 'hex');
+    return signature;
+  }
+
+  _hashes = new Set();
+  async handleMessage(message) {
+    const currentHash = this.generateMessageHash(
+      message.author.displayName || message.author.globalName,
+      message.content,
+      message.channel.name
+    );
+
+    if (this._hashes.has(currentHash)) {
+      logger.warn('Duplicate message detected, skipping processing');
+      return;
+    }
+    this._hashes.add(currentHash)
+
+    this.lastMessageHash = currentHash;
+
     if (message.author.username.includes(this.avatar.name) || message.author.id === this.client.user.id) return;
 
     analytics.updateMessageStats(message);
     dynamicPersona.update(message.content);
 
-    this.messageCache.push(`(${data.location}) ${data.author}: ${data.content}`);
-    if (!this.debounce()) return;
-
+    this.messageCache.push(`(${message.channel.name}) ${message.author.displayName || message.author.globalName}: ${message.content}`);
     if (this.messageCache.length === 0) return;
-    const result = await aiHandler.generateResponse(this.avatar.personality, dynamicPersona, this.messageCache.join('\n'));
+
+    const response = await aiHandler.generateResponse(this.avatar.personality, dynamicPersona, this.messageCache.join('\n'));
     this.messageCache = [];
 
-    if (result.trim() !== "") {
-      logger.info('VoidGoblin responds', { response: result.substring(0, 50) });
-      await this.sendAsAvatar(result, message.channel);
-      this.updateMemory(data, result);
+    if (response.trim() !== "") {
+      const signedMessage = `${response}`;
+      logger.info('VoidGoblin responds', { response: signedMessage.substring(0, 50) });
+      await this.sendAsAvatar(signedMessage, message.channel);
+      this.updateMemory(message, signedMessage);
       analytics.incrementResponseCount();
     } else {
       logger.warn('VoidGoblin has no response');
@@ -154,13 +195,6 @@ class ShadowBot {
     return chunks;
   }
 
-  debounce() {
-    const now = Date.now();
-    if (now - this.lastProcessed < this.debounceTime) return false;
-    this.lastProcessed = now;
-    return true;
-  }
-
   async loadMemory() {
     try {
       const loadedMemory = await dbHandler.loadMemory();
@@ -175,10 +209,10 @@ class ShadowBot {
     }
   }
 
-  updateMemory(data, response) {
+  updateMemory(message, response) {
     this.memory.conversations.push({
-      user: data.author,
-      message: data.content,
+      user: message.author.displayName || message.author.globalName,
+      message: message.content,
       response: response,
       timestamp: new Date().toISOString()
     });
@@ -238,7 +272,6 @@ class ShadowBot {
   }
 }
 
-export default ShadowBot;
+export default VoidGoblinBot;
 
-const shadowBot = new ShadowBot();
-shadowBot.login().catch(console.error);
+const voidGoblinBot = new VoidGoblinBot();

@@ -13,7 +13,7 @@ class AIHandler {
         "X-Title": config.YOUR_SITE_NAME,
       }
     });
-    this.model = config.MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
+    this.model = config.MODEL || 'meta-llama/llama-3.1-405b-instruct';
     this.rateLimit = {
       requests: 1,
       interval: 1000, // 1 second in milliseconds
