@@ -26,9 +26,6 @@ class DBHandler {
   }
 
   async saveMemory(memory) {
-    if (!this.db) {
-      await this.connect();
-    }
     try {
       await this.db.collection('memories').updateOne(
         { name: 'void_goblin' },

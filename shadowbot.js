@@ -14,7 +14,9 @@ class VoidGoblinBot {
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds, 
+        GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.DirectMessages
       ]
     });
 
@@ -72,6 +74,7 @@ class VoidGoblinBot {
   }
 
   async onReady() {
+    await dbHandler.connect();
     logger.info(`VoidGoblin is online as ${this.client.user.tag}`);
     await this.loadMemory();
     this.startPeriodicTasks();
