@@ -9,6 +9,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+let NEXT_UPDATE_TIME = 0;
+
 class VoidGoblinBot {
   constructor() {
     this.client = new Client({
@@ -24,6 +26,7 @@ class VoidGoblinBot {
     this.messageCache = [];
     this.webhookCache = new Map();
     this.lastMessageHash = null;
+    this.lastResponseTime = 0;
     this.privateKey = null;
     this.privateKeyPath = path.join('privateKey.pem');
 
@@ -45,6 +48,8 @@ class VoidGoblinBot {
 
     this.loadOrGeneratePrivateKey();
     this.setupEventListeners();
+    this._messageHashes = new Set(); // Renamed from _hashes for clarity
+    this._hashCleanupInterval = setInterval(() => this._messageHashes.clear(), 3600000); // Cleanup every hour
   }
 
   loadOrGeneratePrivateKey() {
@@ -94,41 +99,62 @@ class VoidGoblinBot {
     return signature;
   }
 
-  _hashes = new Set();
   async handleMessage(message) {
-    const currentHash = this.generateMessageHash(
-      message.author.displayName || message.author.globalName,
-      message.content,
-      message.channel.name
-    );
+    try {
+      const currentHash = this.generateMessageHash(
+        message.author.displayName || message.author.globalName,
+        message.content,
+        message.channel.name
+      );
 
-    if (this._hashes.has(currentHash)) {
-      logger.warn('Duplicate message detected, skipping processing');
-      return;
-    }
-    this._hashes.add(currentHash)
+      if (this._messageHashes.has(currentHash)) {
+        return;
+      }
+      this._messageHashes.add(currentHash);
 
-    this.lastMessageHash = currentHash;
+      this.lastMessageHash = currentHash;
 
-    if (message.author.username.includes(this.avatar.name) || message.author.id === this.client.user.id) return;
+      if (message.author.username.includes(this.avatar.name) || message.author.id === this.client.user.id) return;
 
-    analytics.updateMessageStats(message);
-    dynamicPersona.update(message.content);
+      try {
+        analytics.updateMessageStats(message);
+      } catch (error) {
+        logger.error('Failed to update analytics', { error });
+      }
 
-    this.messageCache.push(`(${message.channel.name}) ${message.author.displayName || message.author.globalName}: ${message.content}`);
-    if (this.messageCache.length === 0) return;
+      if (Date.now() > NEXT_UPDATE_TIME) {
+        try {
+          await dynamicPersona.update(message.content);
+          NEXT_UPDATE_TIME = Date.now() + (1000 * 60 * 60);
+        } catch (error) {
+          logger.error('Failed to update dynamic persona', { error });
+        }
+      }
 
-    const response = await aiHandler.generateResponse(this.avatar.personality, dynamicPersona, this.messageCache.join('\n'));
-    this.messageCache = [];
+      this.messageCache.push(
+        `(${message.channel.name}) ${message.author.username}: ${message.content}`
+      );
+      if (this.messageCache.length === 0) return;
 
-    if (response.trim() !== "") {
-      const signedMessage = `${response}`;
-      logger.info('VoidGoblin responds', { response: signedMessage.substring(0, 50) });
-      await this.sendAsAvatar(signedMessage, message.channel);
-      this.updateMemory(message, signedMessage);
-      analytics.incrementResponseCount();
-    } else {
-      logger.warn('VoidGoblin has no response');
+      // If we replied within the last 5 seconds, don't reply again
+      if (Date.now() - this.lastResponseTime < 15000) return;
+      this.lastResponseTime = Date.now();
+
+      const dynamicPersonaPrompt = dynamicPersona.getPrompt();
+      const response = await aiHandler.generateResponse(this.avatar.personality, dynamicPersonaPrompt, this.messageCache.join('\n'));
+      this.messageCache = [];
+
+      if (response.trim() !== "") {
+        const signedMessage = `${response}`;
+        logger.info('VoidGoblin responds', { response: signedMessage.substring(0, 50) });
+        await this.sendAsAvatar(signedMessage, message.channel);
+        this.updateMemory(message, signedMessage);
+        analytics.incrementResponseCount();
+      } else {
+        logger.warn('VoidGoblin has no response');
+      }
+    } catch (error) {
+      logger.error('Error handling message', { error });
     }
   }
 
@@ -217,12 +243,15 @@ class VoidGoblinBot {
       user: message.author.displayName || message.author.globalName,
       message: message.content,
       response: response,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      channel: message.channel.name || 'unknown'
     });
 
     if (this.memory.conversations.length > 100) {
       this.memory.conversations.shift();
     }
+
+    this.memory.conversations.sort((a, b) => (a.channel || 'unknown').localeCompare(b.channel || 'unknown'));
 
     this.saveMemory();
   }
@@ -272,6 +301,10 @@ class VoidGoblinBot {
       logger.error('Failed to login', { error });
       throw error;
     }
+  }
+
+  cleanup() {
+    clearInterval(this._hashCleanupInterval);
   }
 }
 
