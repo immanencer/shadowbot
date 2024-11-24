@@ -64,6 +64,17 @@ class DBHandler {
       throw error;
     }
   }
+
+  async save(collection, data) {
+    try {
+      await this.ensureConnection();
+      await this.db.collection(collection).insertOne(data);
+      logger.info('Data saved to database', { collection });
+    } catch (error) {
+      logger.error('Error saving data to database', { collection, error });
+      throw error;
+    }
+  }
 }
 
 export default new DBHandler();

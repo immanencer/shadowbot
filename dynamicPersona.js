@@ -90,10 +90,10 @@ class DynamicPersona {
   async generateSummaries() {
     try {
       const dailyPrompt = `Summarize today's experiences in a concise manner: ${this.recentExperiences.map(exp => exp.summary).join('. ')}`;
-      this.dailySummary = await aiHandler.generateResponse('', '', dailyPrompt).trim();
+      this.dailySummary = (await aiHandler.generateResponse('', '', dailyPrompt)).trim();
 
       const weeklyPrompt = `Summarize this week's experiences in a concise manner: ${this.recentExperiences.map(exp => exp.summary).join('. ')}`;
-      this.weeklySummary = await aiHandler.generateResponse('', '', weeklyPrompt).trim();
+      this.weeklySummary = (await aiHandler.generateResponse('', '', weeklyPrompt)).trim();
     } catch (error) {
       logger.error('Error generating summaries', { error: error.message });
     }
