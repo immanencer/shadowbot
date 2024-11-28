@@ -2,6 +2,7 @@
 import OpenAI from 'openai';
 import { config } from './config.js';
 import logger from './logger.js';
+import fs from 'fs';
 
 class AIHandler {
   constructor() {
@@ -22,6 +23,9 @@ class AIHandler {
       maxTokens: null,
     };
     this.updateLimits();
+    
+    this.system_prompt = fs.readFileSync('./system_prompt.md', 'utf8');
+   
   }
 
   async updateLimits() {
@@ -91,10 +95,8 @@ class AIHandler {
 
     this.rollingMessages.push({role: 'user', content: messageContent});
 
-    const system_prompt = fs.readfileSync('./system_prompt.md', 'utf8');
-
     const messages = [
-      { role: "system", content: system_prompt },
+      { role: "system", content: this.system_prompt },
       { role: "assistant", content: `CURRENT PERSONA\n${persona}\nDYNAMIC PERSONALITY LOG: ${dynamicPersonaPrompt}` },
       ...this.rollingMessages
     ];
