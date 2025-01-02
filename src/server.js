@@ -2,8 +2,8 @@ import express from 'express';
 import session from 'express-session';
 import crypto from 'crypto';
 import { TwitterApi } from 'twitter-api-v2';
-import credentialService from './src/services/credentialService.js';
-import { handleOAuthCallback } from './src/xHandler.js';
+import credentialService from './services/credentialService.js';
+import { handleOAuthCallback } from './xHandler.js';
 
 const app = express();
 const port = process.env.PORT || 3000;
