@@ -1,19 +1,12 @@
 // aiHandler.js
-import OpenAI from 'openai';
+// Remove: import OpenAI from 'openai';
 import { config } from './config.js';
 import logger from './logger.js';
 import fs from 'fs';
 
 class AIHandler {
   constructor() {
-    this.openai = new OpenAI({
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey: config.OPENROUTER_API_KEY,
-      defaultHeaders: {
-        "HTTP-Referer": config.YOUR_SITE_URL,
-        "X-Title": config.YOUR_SITE_NAME,
-      }
-    });
+
     this.model = config.MODEL || 'meta-llama/llama-3.1-405b-instruct';
     this.rateLimit = {
       requests: 1,
@@ -62,10 +55,10 @@ class AIHandler {
   }
 
   async fetchKeyInfo() {
-    const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
+    const response = await fetch(config.OPENAI_API_URI + '/auth/key', {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${config.OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${config.OPENAI_API_KEY}`,
       },
     });
     if (!response.ok) {
@@ -75,10 +68,10 @@ class AIHandler {
   }
 
   async fetchModelInfo() {
-    const response = await fetch('https://openrouter.ai/api/v1/models', {
+    const response = await fetch(config.OPENAI_API_URI + '/models', {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${config.OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${config.OPENAI_API_KEY}`,
       },
     });
     if (!response.ok) {
@@ -90,36 +83,50 @@ class AIHandler {
 
   rollingMessages = [];
   
+  formatGroupChatMessages(messages) {
+    return messages
+      .map(m => `${m.name || m.role} said ${m.content}`)
+      .join('\n');
+  }
+
   async generateResponse(persona, dynamicPersonaPrompt, messageContent) {
     await this.waitForRateLimit();
 
-    this.rollingMessages.push({role: 'user', content: messageContent});
+    this.rollingMessages.push({ role: 'user', content: messageContent });
 
-    const messages = [
-      { role: "system", content: this.system_prompt },
-      { role: "assistant", content: `CURRENT PERSONA\n${persona}\nDYNAMIC PERSONALITY LOG: ${dynamicPersonaPrompt}` },
+    const promptText = this.formatGroupChatMessages([
+      { channel: 'system', name: 'System', content: this.system_prompt },
+      { channel: 'assistant', name: 'Assistant', content: `CURRENT PERSONA\n${persona}\nDYNAMIC PERSONALITY LOG: ${dynamicPersonaPrompt}` },
       ...this.rollingMessages
-    ];
+    ]);
 
     try {
-      const completion = await this.retryFetch(() => 
-        this.openai.chat.completions.create({
-          model: this.model,
-          messages: messages,
-          temperature: 0.8,
-          top_p: 1,
-          repetition_penalty: 1,
-          max_tokens: 512,
-          stop: "\n"
+      const completion = await this.retryFetch(() =>
+        fetch(`${config.OPENAI_API_URI}/completions`, {
+          method: 'POST',
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: this.model,
+            prompt: promptText,
+            temperature: 0.8,
+            top_p: 1,
+            max_tokens: 512,
+          }),
+        }).then(response => {
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          return response.json();
         })
       );
 
       logger.info('AI response generated', { 
         prompt: messageContent.substring(0, 50),
-        response: completion.choices[0].message.content.substring(0, 50)
+        response: completion.choices[0].text.substring(0, 50)
       });
 
-      this.rollingMessages.push({role: 'assistant', content: completion.choices[0].message.content})
+      this.rollingMessages.push({ role: 'assistant', content: completion.choices[0].text });
 
       this.rateLimit.creditsRemaining--;
       if (this.rateLimit.creditsRemaining % 10 === 0) {
@@ -128,11 +135,11 @@ class AIHandler {
 
       this.rollingMessages.splice(-50);
 
-      return completion.choices[0].message.content;
+      return completion.choices[0].text;
     } catch (error) {
       logger.error('AI chat error', { error: error.message });
       if (error.response?.status === 402) {
-        logger.error('Out of credits. Please add credits to your OpenRouter account.');
+        logger.error('Out of credits. Please add credits to your account.');
       }
       return '👾 Error generating response';
     }

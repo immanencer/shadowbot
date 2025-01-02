@@ -8,6 +8,7 @@ import analytics from './analytics.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { composePost, handleMentions } from './xHandler.js';
 
 let NEXT_UPDATE_TIME = 0;
 
@@ -82,6 +83,8 @@ class VoidGoblinBot {
     await dbHandler.connect();
     logger.info(`VoidGoblin is online as ${this.client.user.tag}`);
     await this.loadMemory();
+    // Post system test on startup
+    await composePost(this.memory); 
     this.startPeriodicTasks();
   }
 
@@ -239,6 +242,8 @@ class VoidGoblinBot {
   }
 
   updateMemory(message, response) {
+    // Only save if new content
+    if (!message || !response) return;
     this.memory.conversations.push({
       user: message.author.displayName || message.author.globalName,
       message: message.content,
@@ -269,6 +274,10 @@ class VoidGoblinBot {
     setInterval(() => this.updateGoal(), 3600000); // Update goal every hour
     setInterval(() => this.summarizeMemory(), 86400000); // Summarize memory daily
     setInterval(() => analytics.exportToCSV(), 86400000); // Export analytics daily
+    setInterval(async () => {
+      await composePost(this.memory);
+      await handleMentions();
+    }, 3600000); // Once per hour
   }
 
   async updateGoal() {

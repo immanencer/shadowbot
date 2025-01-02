@@ -11,13 +11,13 @@ const replicate = new Replicate({
 });
 
 // MongoDB connection URI and database name
-const MONGO_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
 const DB_NAME = "imageRequests";
 const COLLECTION_NAME = "requests";
 
 // Function to insert a new request into MongoDB
 async function insertRequestIntoMongo(prompt, result) {
-    const client = new MongoClient(MONGO_URI);
+    const client = new MongoClient(MONGODB_URI);
     try {
         await client.connect();
         const db = client.db(DB_NAME);
@@ -41,7 +41,7 @@ async function insertRequestIntoMongo(prompt, result) {
 
 // Function to check if the daily limit has been reached
 async function checkDailyLimit() {
-    const client = new MongoClient(MONGO_URI);
+    const client = new MongoClient(MONGODB_URI);
     try {
         await client.connect();
         const db = client.db(DB_NAME);

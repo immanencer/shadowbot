@@ -13,6 +13,17 @@
             ],
             "program": "${workspaceFolder}/main.js",
             "envFile": "${workspaceFolder}/.env"
+        },
+
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Launch Server",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "program": "${workspaceFolder}/server.js",
+            "envFile": "${workspaceFolder}/.env"
         }
     ]
 }
