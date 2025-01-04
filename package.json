@@ -11,6 +11,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@twitter-api-v2/plugin-rate-limit": "^1.1.0",
+    "@twitter-api-v2/plugin-token-refresher": "^1.0.0",
     "agent-twitter-client": "git+https://github.com/ratimics/agent-twitter-client.git#ratimics",
     "axios": "^1.7.9",
     "csv-writer": "^1.6.0",
@@ -22,6 +24,7 @@
     "mongodb": "^6.8.0",
     "openai": "^4.54.0",
     "replicate": "^1.0.1",
+    "sharp": "^0.33.5",
     "winston": "^3.13.1"
   }
 }

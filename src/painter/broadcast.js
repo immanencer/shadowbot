@@ -2,6 +2,7 @@ import { chatWithAI } from './ai.js';
 import { postX } from './x.js';
 import { draw_picture } from './blackforest-replicate.js'; // Updated draw_picture function
 import { bardSonnetStyle, bardPaintingStyle, evolveStyle } from './evolveStyle.js'; // Importing the bard's evolving styles
+import { uploadImage } from '../services/s3Service.js';
 
 export async function generateSonnets(memory, avatar) {
     const sonnetPrompt = `
@@ -44,18 +45,29 @@ export async function broadcast(memory, avatar) {
         const postText = `${sonnetText}`;
 
         // Generate the painting based on the evolving painting style
-        let imageBuffer = null;
+        let imageUrl = null;
         try {
             const paintingPrompt = await chatWithAI(`${bardPaintingStyle}\n\n"${sonnetText}\n\n${memory.dream}\n\n${memory.goal}\n\n${memory.summary}"\n\nBased on all that, describe in detail a painting that you would like to create, this will be a prompt for a diffusion model picture generator ai so tailor it accordingly. Keep it short and specific.`, avatar, memory); 
             console.log(paintingPrompt);
-            imageBuffer = await draw_picture(paintingPrompt +  "\n\nImportant; oil painting signed by \"The Lonely Bard\""); // Generate the image using Replicate API
+            const imageBuffer = await draw_picture(paintingPrompt +  "\n\nImportant; oil painting signed by \"The Lonely Bard\"");
+            
+            // Save the image buffer to a temporary file
+            const tempFilePath = `./temp_image_${Date.now()}.png`;
+            fs.writeFileSync(tempFilePath, imageBuffer);
+            
+            // Upload the image to S3 and get the URL
+            imageUrl = await uploadImage(tempFilePath);
+            
+            // Delete the temporary file
+            fs.unlinkSync(tempFilePath);
         } catch (error) {
             console.error('🎶 Error generating painting image:', error);
         }
 
-        // Post the entire sonnet with the generated image buffer (if available)
+        // Post the entire sonnet with the generated image URL (if available)
         try {
-            const response = await postX({ text: postText }, '', imageBuffer);
+            const postText = `${sonnetText}${imageUrl ? `\n\nImage: ${imageUrl}` : ''}`;
+            const response = await postX({ text: postText });
             if (response) {
                 console.log('🎶 Sonnet and painting posted successfully:', response);
             } else {

@@ -41,8 +41,8 @@ app.get('/', async (req, res) => {
 app.get('/auth/twitter/login', async (req, res) => {
   try {
     const client = new TwitterApi({
-      clientId: process.env.TWITTER_CLIENT_ID,
-      clientSecret: process.env.TWITTER_CLIENT_SECRET,
+      clientId: process.env.X_CLIENT_ID,
+      clientSecret: process.env.X_CLIENT_SECRET,
     });
 
     const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
@@ -100,7 +100,7 @@ app.get('/auth/twitter/callback', async (req, res) => {
 
 app.get('/auth/twitter/logout', async (req, res) => {
   try {
-    await credentialService.collection.deleteOne({ type: 'twitter_oauth2' });
+    await credentialService.collection.deleteOne({ type: 'X_oauth2' });
     req.session.destroy();
     res.redirect('/');
   } catch (error) {

@@ -4,6 +4,7 @@ import { Buffer } from 'buffer';
 import Replicate from 'replicate';
 import process from 'process';
 import fs from 'fs';
+import path from 'path';
 
 // Initialize Replicate with your API token
 const replicate = new Replicate({
@@ -93,52 +94,35 @@ export async function draw_picture(prompt) {
 
     try {
         // Step 1: Initiate the image generation request using Replicate API
-        const prediction = await replicate.predictions.create({
-            model: "black-forest-labs/flux-1.1-pro-ultra",
-            input: {
-                "raw": false,
-                prompt,
-                "aspect_ratio": "2:3",
-                "output_format": "png",
-                "safety_tolerance": 5
-            }
-        });
-        console.log('Prediction started:', prediction.id);
+        const output = await replicate.run(
+            process.env.IMAGE_MODEL,
+            {
+                input: {
+                    model: "dev",
+                    prompt: `MRQ holographic neon black ${prompt} MRQ`,
+                    lora_scale: 1,
+                    num_outputs: 1,
+                    aspect_ratio: "1:1",
+                    output_format: "webp",
+                    guidance_scale: 3.5,
+                    output_quality: 90,
+                    prompt_strength: 0.8,
+                    extra_lora_scale: 1,
+                    num_inference_steps: 28
+                }
+            });
 
-        // Step 2: Poll the prediction status until the image is ready
-        let completed = null;
-        const maxAttempts = 30; // Maximum number of polling attempts (e.g., 30 * 2s = 60s)
-        for (let i = 0; i < maxAttempts; i++) {
-            const latest = await replicate.predictions.get(prediction.id);
-            console.log(`Polling attempt ${i + 1}/${maxAttempts}: Status - ${latest.status}`);
+        const url = output.toString('utf-8').trim();
+        console.log('Image generated successfully:', url);
 
-            if (latest.status === "succeeded") {
-                completed = latest;
-                break;
-            } else if (latest.status === "failed") {
-                throw new Error('Prediction failed');
-            }
-
-            // Wait for 2 seconds before the next poll
-            await new Promise((resolve) => setTimeout(resolve, 10000));
-        }
-
-        if (!completed) {
-            throw new Error('Prediction did not complete within the expected time.');
-        }
-
-        // Step 3: Download the generated image as a PNG
-        const imageUrl = completed.output; // Assuming the first output is the PNG URL
-        const imageBuffer = await downloadImage(imageUrl);
-
+        // Step 2: Download the image as a buffer
+        const imageBuffer = await downloadImage(url);
         // Save the image to a file
         if (!fs.existsSync('./bard_images')) {
             fs.mkdirSync('./bard_images');
         }
-        fs.writeFileSync(`./bard_images/${Date.now()}.png`, imageBuffer);
-
-        // Step 4: Insert the prompt and result into MongoDB
-        await insertRequestIntoMongo(prompt, completed.output);
+        const filepath = path.resolve(`./bard_images/${Date.now()}.png`);
+        fs.writeFileSync(filepath, imageBuffer);
 
         // Step 5: Return the image buffer
         console.log('Image generated and downloaded successfully.');

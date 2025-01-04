@@ -92,13 +92,11 @@ class AIHandler {
   async generateResponse(persona, dynamicPersonaPrompt, messageContent) {
     await this.waitForRateLimit();
 
-    this.rollingMessages.push({ role: 'user', content: messageContent });
-
     const promptText = this.formatGroupChatMessages([
       { channel: 'system', name: 'System', content: this.system_prompt },
       { channel: 'assistant', name: 'Assistant', content: `CURRENT PERSONA\n${persona}\nDYNAMIC PERSONALITY LOG: ${dynamicPersonaPrompt}` },
       ...this.rollingMessages
-    ]);
+    ]) + messageContent;
 
     try {
       const completion = await this.retryFetch(() =>
@@ -109,11 +107,13 @@ class AIHandler {
             Authorization: `Bearer ${config.OPENAI_API_KEY}`,
           },
           body: JSON.stringify({
-            model: this.model,
-            prompt: promptText,
-            temperature: 0.8,
-            top_p: 1,
-            max_tokens: 512,
+            model: this.model,            // LLaMA model identifier
+            prompt: promptText,           // The input prompt with formatted context
+            temperature: 0.8,             // Higher randomness for creativity
+            top_p: 0.85,                  // Focus on probable words while allowing diversity
+            max_tokens: 280,              // Limits the length of the response (for Twitter constraints)
+            frequency_penalty: 0.3,       // Penalize repetition slightly
+            presence_penalty: 0.5,        // Encourage introducing new concepts
           }),
         }).then(response => {
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);

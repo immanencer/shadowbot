@@ -28,7 +28,7 @@ class CredentialService {
     const expiresAt = new Date(Date.now() + expiresIn * 1000);
     
     await this.collection.updateOne(
-      { type: 'twitter_oauth2' },
+      { type: 'X_oauth2' },
       {
         $set: {
           accessToken,
@@ -47,7 +47,7 @@ class CredentialService {
       throw new Error('MongoDB collection not initialized');
     }
 
-    const credentials = await this.collection.findOne({ type: 'twitter_oauth2' });
+    const credentials = await this.collection.findOne({ type: 'X_oauth2' });
     if (!credentials) return null;
 
     const now = new Date();
@@ -61,24 +61,25 @@ class CredentialService {
     return credentials;
   }
 
-  async refreshCredentials(refreshToken) {
-    const client = new TwitterApi({
-      clientId: process.env.TWITTER_CLIENT_ID,
-      clientSecret: process.env.TWITTER_CLIENT_SECRET,
-    });
+  // No longer needed if using TwitterApiAutoTokenRefresher
+  // async refreshCredentials(refreshToken) {
+  //   const client = new TwitterApi({
+  //     clientId: process.env.X_CLIENT_ID,
+  //     clientSecret: process.env.X_CLIENT_SECRET,
+  //   });
 
-    try {
-      const { accessToken, refreshToken: newRefreshToken, expiresIn } = 
-        await client.refreshOAuth2Token(refreshToken);
+  //   try {
+  //     const { accessToken, refreshToken: newRefreshToken, expiresIn } = 
+  //       await client.refreshOAuth2Token(refreshToken);
 
-      await this.storeCredentials({ accessToken, refreshToken: newRefreshToken, expiresIn });
+  //     await this.storeCredentials({ accessToken, refreshToken: newRefreshToken, expiresIn });
       
-      return await this.getValidCredentials();
-    } catch (error) {
-      await this.collection.deleteOne({ type: 'twitter_oauth2' });
-      throw error;
-    }
-  }
+  //     return await this.getValidCredentials();
+  //   } catch (error) {
+  //     await this.collection.deleteOne({ type: 'X_oauth2' });
+  //     throw error;
+  //   }
+  // }
 
   async getClient() {
     const credentials = await this.getValidCredentials();
