@@ -50,14 +50,6 @@ class CredentialService {
     const credentials = await this.collection.findOne({ type: 'X_oauth2' });
     if (!credentials) return null;
 
-    const now = new Date();
-    const expiresAt = new Date(credentials.expiresAt);
-
-    // If token expires in less than 5 minutes, refresh it
-    if (expiresAt.getTime() - now.getTime() < 300000) {
-      return await this.refreshCredentials(credentials.refreshToken);
-    }
-
     return credentials;
   }
 
