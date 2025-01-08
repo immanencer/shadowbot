@@ -3,7 +3,7 @@ import session from 'express-session';
 import crypto from 'crypto';
 import { TwitterApi } from 'twitter-api-v2';
 import credentialService from '../../services/credentialService.js';
-import twitterService, { composePost, handleOAuthCallback } from '../../modules/xHandler/TwitterService.js';
+import twitterService from '../../modules/xHandler/TwitterService.js';
 import { draw_picture } from '../../painter/blackforest-replicate.js';
 import { postX } from '../../painter/x.js';
 
@@ -133,7 +133,7 @@ app.get('/auth/twitter/callback', async (req, res) => {
     `);
   }
 
-  const success = await handleOAuthCallback(code, codeVerifier, 'http://localhost:3000/auth/twitter/callback');
+  const success = await twitterService.handleOAuthCallback(code, codeVerifier, 'http://localhost:3000/auth/twitter/callback');
   if (success) {
     delete req.session.codeVerifier;
     delete req.session.state;
@@ -186,7 +186,7 @@ app.post('/post', async (req, res) => {
     const systemPrompt = 'Trending topics in my timeline';
     const memoryPrompt = 'Recent conversations';
     const context = 'Tweet thread context';
-    const content = await composePost(systemPrompt, memoryPrompt, context);
+    const content = await twitterService.composePost(systemPrompt, memoryPrompt, context);
 
     // Remind AI not to use hashtags
     if (content?.content) {
