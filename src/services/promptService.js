@@ -20,7 +20,7 @@ function buildPrompt(userInput, context = '', maxLength = 600) {
   <system>Example system instructions here.</system>
   <human>Example user text here.</human>
   <assistant>
-    <tweet>This is an example tweet.</tweet>
+    <tweet author="Mirquo" account="@mirquo_x0">This is an example tweet.</tweet>
   </assistant>
 </conversation>`;
 
@@ -28,10 +28,9 @@ function buildPrompt(userInput, context = '', maxLength = 600) {
   // The systemPrompt can contain persona, style, or general instructions.
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!-- 
-  Provide a short answer inside <tweet>...</tweet>, 
+  Provide a short answer inside <tweet author="Mirquo" account="@mirquo_x0">...</tweet>, 
   then close it with </tweet>.
   Keep it under ~${maxLength} chars. 
-  Do not add extra tags or disclaimers.
 -->
 
 ${xmlExample}
@@ -39,7 +38,9 @@ ${xmlExample}
 <conversation>
   <system>
 ${systemPrompt.trim()}
-    You are "Mirquo the void goblin." 
+    Your x handle is @mirquo_x0.
+    You have a solana token and a love for NFTs.
+    Your Ca is 
     (Additional persona instructions or constraints go here.)
   </system>
   <human>
@@ -47,7 +48,7 @@ ${context.trim()}
     The user says: "${userInput.trim()}"
   </human>
   <assistant>
-    <tweet author="Mirquo">`;
+    <tweet author="Mirquo" account="@mirquo_x0">`;
 }
 
 /**
@@ -56,51 +57,33 @@ ${context.trim()}
  *
  * @param {string} userInput - The user's text or mention.
  * @param {string} context   - Additional context from DB or conversation history.
- * @param {object} options   - e.g. { maxAttempts, maxLength }.
+ * @param {object} options   - e.g. { maxAttempts, maxLength }....</tweet>.
  * @returns {{ success: boolean, tweet?: string, error?: string }}
  */
 export async function generateTweet(userInput, context = '', options = {}) {
   const { maxAttempts = 5, maxLength = 600 } = options;
-
-  // Construct the prompt
   const prompt = buildPrompt(userInput, context, maxLength);
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // If aiHandler supports a "stop" array, you can do:
       const raw = await aiHandler.generateCompletion(prompt, { stop: ["</tweet>"] });
-      // Otherwise, just fetch the entire output and parse manually.
-      ///const raw = await aiHandler.generateCompletion(prompt);
-
-
       let tweetText = raw.trim();
-
-      // Optionally remove leading @mentions
       tweetText = tweetText.replace(/^(@\w+\s*)+/, '').trim();
-
-      // Check if it's too long
       if (tweetText.length > maxLength) {
         console.warn(`Attempt ${attempt}: Tweet is too long (${tweetText.length} chars).`);
         continue; // retry
       }
-
-      // If we get here, success!
       return { success: true, tweet: tweetText };
-
     } catch (error) {
       if (error.response?.status === 429 || error.code === 429) {
         console.warn('Rate limit (429) encountered, waiting 10 seconds...');
         await new Promise(r => setTimeout(r, 10000));
       }
       console.error(`Error generating tweet (attempt ${attempt}):`, error);
-      // If it's the final attempt, return failure
       if (attempt === maxAttempts) {
         return { success: false, error: `Failed after ${maxAttempts} attempts: ${error.message}` };
       }
     }
   }
-
-  // If we exhausted retries without success:
   return {
     success: false,
     error: `No valid <tweet> found after ${maxAttempts} attempts (max length ${maxLength})`

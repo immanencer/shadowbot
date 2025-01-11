@@ -26,7 +26,7 @@ export async function pollMentionsAndReplies(service) {
         await handleMention(service, mention);
 
         // Wait a bit between handling each mention
-        await new Promise(resolve => setTimeout(resolve, 6660));
+        await new Promise(resolve => setTimeout(resolve, 66660));
       }
     } catch (error) {
       console.error('Error polling mentions and replies:', error);

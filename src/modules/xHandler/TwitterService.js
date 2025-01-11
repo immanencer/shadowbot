@@ -9,6 +9,8 @@ import { TwitterApiAutoTokenRefresher } from '@twitter-api-v2/plugin-token-refre
 import fs from 'fs';
 import path from 'path';
 
+import * as fuzzball from 'fuzzball';  // Import all named exports from fuzzball
+
 import credentialService from '../../services/credentialService.js';
 import { uploadImage } from '../../services/s3Service.js';
 import { TwitterAuthManager } from './TwitterAuthManager.js';
@@ -423,7 +425,7 @@ export class TwitterService {
     return reply;
   }
 
-  // Example: fetch user timeline w/ expansions for username
+
   async fetchRelevantPosts() {
     this.resetCountersIfNeeded();
     if (this.monthlyReads >= this.monthlyReadLimit) {
@@ -439,29 +441,39 @@ export class TwitterService {
           'user.fields': ['username']
         })
       );
-
-      // If we got timeline data, store tweets with username
+  
       if (timeline?.data?.data?.length) {
         const userMap = new Map();
-        // timeline.includes?.users might hold user objects
         (timeline.includes?.users || []).forEach(u => {
           userMap.set(u.id, u.username);
         });
-
+  
+        const storedTweets = await this.fetchRelevantPostsFromDB(); // Fetch existing stored tweets
+        const uniqueTweets = [];
+  
         for (const tweet of timeline.data.data) {
-          await this.storeTweet({
-            id: tweet.id,
-            text: tweet.text,
-            author_id: tweet.author_id,
-            author_username: userMap.get(tweet.author_id) || null,
-            created_at: tweet.created_at
+          const isDuplicate = storedTweets.some(stored => {
+            const similarity = fuzzball.ratio(stored.text, tweet.text);
+            return similarity > 50; // Similarity threshold
           });
+  
+          if (!isDuplicate) {
+            const tweetData = {
+              id: tweet.id,
+              text: tweet.text,
+              author_id: tweet.author_id,
+              author_username: userMap.get(tweet.author_id) || null,
+              created_at: tweet.created_at
+            };
+            await this.storeTweet(tweetData);
+            uniqueTweets.push(tweetData);
+          }
         }
-
+  
         this.monthlyReads++;
-        return timeline.data.data;
+        return uniqueTweets;
       }
-
+  
       console.log('Falling back to DB for relevant posts');
       return await this.fetchRelevantPostsFromDB();
     } catch (error) {
@@ -470,6 +482,8 @@ export class TwitterService {
       return await this.fetchRelevantPostsFromDB();
     }
   }
+  
+  
 
   // DB fallback
   async fetchRelevantPostsFromDB() {
