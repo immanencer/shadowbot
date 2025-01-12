@@ -6,7 +6,6 @@ import credentialService from '../../services/credentialService.js';
 import twitterService from '../../modules/xHandler/TwitterService.js';
 import { draw_picture } from '../../painter/blackforest-replicate.js';
 import { postX } from '../../painter/x.js';
-import { ChromaClient } from 'chromadb';
 import { initializeMemory } from '../../services/memoryService.js';
 
 const app = express();
@@ -22,10 +21,6 @@ app.use(session({
     maxAge: 3600000 // 1 hour
   }
 }));
-
-const chromaClient = new ChromaClient({
-  path: process.env.CHROMADB_URI || 'http://localhost:8000'
-});
 
 async function postImageToX() {
   try {
@@ -87,7 +82,6 @@ app.listen(port, async () => {
 
   } catch (error) {
     console.error('Error during server initialization:', error);
-    console.error('Error initializing ChromaDB:', error);
   }
 });
 

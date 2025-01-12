@@ -56,17 +56,19 @@ export async function handleMention(service, mention) {
   }
 
   try {
+    // Define collectionName
+    const collectionName = 'tweets'; // Replace with your actual collection name
+
     // 1) Grab prior context from DB
-    const conversationContext = await getSimplifiedContext(service, mention, true);
+    const conversationContext = await getSimplifiedContext(service, mention, true, collectionName);
     console.log(`Found ${conversationContext.length} context messages`);
 
     // 2) Format that context
     const formattedContext = conversationContext
-      .map(post => `<tweet author="${post.author_id === userId ? 'Mirquo' : 'Human'}">${post.text}</tweet>`)
+      .map(post => `Post from ${post.author_id === userId ? 'Bot' : 'Human'}: ${post.text}`)
       .join('\n');
 
     // 3) Generate the text content via the new function
-    // e.g. composeTweetContent(userPrompt, additionalContext)
     const content = await composeTweetContent(mention.text, formattedContext);
 
     if (!content || !content.content) {

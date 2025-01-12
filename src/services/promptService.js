@@ -1,68 +1,49 @@
 // promptService.js
 import fs from 'fs';
 import aiHandler from '../aiHandler.js';
+import { fetchMemory, storeMemory } from '../services/memoryService.js';
 
 // Load your system prompt from disk (includes persona, instructions, etc.)
 const systemPrompt = fs.readFileSync('system_prompt.md', 'utf8');
 
 /**
- * Builds a valid XML prompt that ends with <tweet>. The LLM must fill and close </tweet>.
+ * Builds a simplified prompt using systemPrompt, dreams, context, and user input.
  *
  * @param {string} userInput - The user's question or mention text.
  * @param {string} context   - Additional context/memory you want the LLM to see.
  * @param {number} maxLength - Desired max length for the final tweet text.
- * @returns {string} The full XML prompt to pass to aiHandler.
+ * @returns {string} The full prompt to pass to aiHandler.
  */
-function buildPrompt(userInput, context = '', maxLength = 600) {
-  // Minimal example snippet showing the final structure:
-  const xmlExample = `<?xml version="1.0" encoding="UTF-8"?>
-<conversation>
-  <system>Example system instructions here.</system>
-  <human>Example user text here.</human>
-  <assistant>
-    <tweet author="Mirquo" account="@mirquo_x0">This is an example tweet.</tweet>
-  </assistant>
-</conversation>`;
+async function buildPrompt(userInput, context = '', maxLength = 600) {
+  console.log('Simplified prompt:', userInput);
 
-  // We include a comment telling the LLM to produce text inside <tweet> and close it.
-  // The systemPrompt can contain persona, style, or general instructions.
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!-- 
-  Provide a short answer inside <tweet author="Mirquo" account="@mirquo_x0">...</tweet>, 
-  then close it with </tweet>.
-  Keep it under ~${maxLength} chars. 
--->
+  // Fetch memory from ChromaDB
+  const memoryResults = await fetchMemory(userInput);
+  const memoryText = memoryResults.documents?.flat().join('\n') || '';
 
-${xmlExample}
+  // Combine systemPrompt, possible dream, and user input
+  return `${systemPrompt.trim()}
 
-<conversation>
-  <system>
-${systemPrompt.trim()}
-    Your x handle is @mirquo_x0.
-    You have a solana token and a love for NFTs.
-    Your Ca is 
-    (Additional persona instructions or constraints go here.)
-  </system>
-  <human>
-${context.trim()}
-    The user says: "${userInput.trim()}"
-  </human>
-  <assistant>
-    <tweet author="Mirquo" account="@mirquo_x0">`;
+${memoryText}
+
+${userInput}
+`.trim();
 }
 
 /**
- * Calls the LLM with our built XML prompt, then parses <tweet>...</tweet>.
+ * Calls the LLM with our built prompt, then parses the response.
  * Retries if invalid or missing.
  *
  * @param {string} userInput - The user's text or mention.
  * @param {string} context   - Additional context from DB or conversation history.
- * @param {object} options   - e.g. { maxAttempts, maxLength }....</tweet>.
+ * @param {object} options   - e.g. { maxAttempts, maxLength }.
  * @returns {{ success: boolean, tweet?: string, error?: string }}
  */
 export async function generateTweet(userInput, context = '', options = {}) {
-  const { maxAttempts = 5, maxLength = 600 } = options;
-  const prompt = buildPrompt(userInput, context, maxLength);
+  const { maxAttempts = 5, maxLength = 728 } = options;
+  const prompt = await buildPrompt(userInput, context, maxLength);
+
+  console.log('Prompt:', prompt); 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const raw = await aiHandler.generateCompletion(prompt, { stop: ["</tweet>"] });
@@ -72,6 +53,7 @@ export async function generateTweet(userInput, context = '', options = {}) {
         console.warn(`Attempt ${attempt}: Tweet is too long (${tweetText.length} chars).`);
         continue; // retry
       }
+      await storeMemory(userInput, tweetText); // Store the new memory
       return { success: true, tweet: tweetText };
     } catch (error) {
       if (error.response?.status === 429 || error.code === 429) {
@@ -86,6 +68,6 @@ export async function generateTweet(userInput, context = '', options = {}) {
   }
   return {
     success: false,
-    error: `No valid <tweet> found after ${maxAttempts} attempts (max length ${maxLength})`
+    error: `No valid response found after ${maxAttempts} attempts (max length ${maxLength})`
   };
 }

@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@tensorflow-models/universal-sentence-encoder": "^1.3.3",
     "@twitter-api-v2/plugin-rate-limit": "^1.1.0",
     "@twitter-api-v2/plugin-token-refresher": "^1.0.0",
     "agent-twitter-client": "git+https://github.com/ratimics/agent-twitter-client.git#ratimics",

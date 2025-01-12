@@ -454,7 +454,7 @@ export class TwitterService {
         for (const tweet of timeline.data.data) {
           const isDuplicate = storedTweets.some(stored => {
             const similarity = fuzzball.ratio(stored.text, tweet.text);
-            return similarity > 50; // Similarity threshold
+            return similarity > 80; // Similarity threshold
           });
   
           if (!isDuplicate) {
