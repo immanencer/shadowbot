@@ -5,7 +5,6 @@ import { TwitterApi } from 'twitter-api-v2';
 import credentialService from '../../services/credentialService.js';
 import twitterService from '../../modules/xHandler/TwitterService.js';
 import { draw_picture } from '../../painter/blackforest-replicate.js';
-import { postX } from '../../painter/x.js';
 import { initializeMemory } from '../../services/memoryService.js';
 
 const app = express();

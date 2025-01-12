@@ -597,6 +597,10 @@ Please summarize and produce a short tweet.
   async generateImageDescription() {
     try {
       const memories = await this.fetchRelevantPosts();
+      if (!Array.isArray(memories)) {
+        console.error('Error: fetchRelevantPosts did not return an array');
+        return null;
+      }
       const memoryText = memories.map(m => m.text).join('\n');
       // You can also adapt your new prompt system or do a direct LLM call:
       const prompt = `
