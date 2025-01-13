@@ -3,7 +3,7 @@ import session from 'express-session';
 import crypto from 'crypto';
 import { TwitterApi } from 'twitter-api-v2';
 import credentialService from '../../services/credentialService.js';
-import twitterService from '../../modules/xHandler/TwitterService.js';
+import { initTwitterService } from '../../modules/xHandler/TwitterService.js';
 import { draw_picture } from '../../painter/blackforest-replicate.js';
 import { initializeMemory } from '../../services/memoryService.js';
 
@@ -24,9 +24,10 @@ app.use(session({
 async function postImageToX() {
   try {
     console.log('Generating image description and posting image to X');
-    const description = await twitterService.generateImageDescription();
+    const service = await initTwitterService();
+    const description = await service.generateImageDescription();
     const imageBuffer = await draw_picture(description);
-    await twitterService.postImage(imageBuffer);
+    await service.postImage(imageBuffer);
     console.log('Image posted successfully');
   } catch (error) {
     if (error.code === 413) {
@@ -42,7 +43,7 @@ async function postImageToX() {
 
 // Post an image on server startup
 try {
-  await postImageToX();
+  setTimeout(async () => { await postImageToX() }, 5000);
   console.log('Initial image post successful');
 } catch (error) {
   console.error('Unhandled error during initial image post:', error);
@@ -71,8 +72,11 @@ app.listen(port, async () => {
 
     await initializeMemory();
 
-    const authenticated = await twitterService.authenticate();
-    if (!authenticated) {
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for MongoDB connection
+
+    const service = await initTwitterService();
+    const success = await service.authenticate();
+    if (!success) {
       console.error('Failed to authenticate Twitter service.');
       return;
     }

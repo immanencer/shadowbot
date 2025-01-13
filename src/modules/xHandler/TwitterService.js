@@ -6,10 +6,12 @@ import { TwitterApi } from 'twitter-api-v2';
 import { fileURLToPath } from 'url';
 import { TwitterApiRateLimitPlugin } from '@twitter-api-v2/plugin-rate-limit';
 import { TwitterApiAutoTokenRefresher } from '@twitter-api-v2/plugin-token-refresher';
-import fs from 'fs';
-import path from 'path';
 
-import * as fuzzball from 'fuzzball';  // Import all named exports from fuzzball
+import fs from 'fs'; // For synchronous file writes (temp file)
+import path from 'path';
+import { promises as fsPromises } from 'fs'; // For async file reads
+
+import * as fuzzball from 'fuzzball'; // Used in fetchRelevantPosts() similarity checks
 
 import credentialService from '../../services/credentialService.js';
 import { uploadImage } from '../../services/s3Service.js';
@@ -18,12 +20,12 @@ import { Metrics } from './Metrics.js';
 import { pollMentionsAndReplies } from './Polling.js';
 import { initializeMongo, storeTweet } from './TwitterMongo.js';
 
-// Import our new prompt utility
+// Our prompt utility
 import { generateTweet } from '../../services/promptService.js';
 
-// --------------------------------------------------
-// Utility-like method (was composeContent in old code)
-// --------------------------------------------------
+/**
+ * Utility method to generate tweet text via an LLM-based prompt.
+ */
 export async function composeTweetContent(basePrompt, context = '') {
   const result = await generateTweet(basePrompt, context, { maxAttempts: 5, maxLength: 600 });
   if (result.success) {
@@ -33,51 +35,41 @@ export async function composeTweetContent(basePrompt, context = '') {
   return { type: 'text', content: null };
 }
 
-// --------------------------------------------------
-// Exports from old utility (slimmed down):
-// getSimplifiedContext used in mention handling
-// --------------------------------------------------
-// --------------------------------------------------
-// Exports from old utility (slimmed down):
-// getSimplifiedContext used in mention handling
-// --------------------------------------------------
-export async function getSimplifiedContext(service, mention, isReply = false) {
+/**
+ * Provide simplified context for mention/reply generation.
+ */
+export async function getSimplifiedContext(service, mention) {
   if (!mention || !mention.text || !mention.author_id) return [];
+
   const userId = await service.getCachedUserId();
 
-  // Grab context from mention’s author
+  // Grab context from mention’s author, plus the bot's own prior posts
   const authorContext = await service.searchContext(mention.text, mention.author_id);
-
-  // And from the bot’s own prior posts
   const botContext = await service.searchContext('', userId);
 
   // Combine
   const combined = [...authorContext, ...botContext];
 
-  // 1. Filter out any post whose entire text is just a URL.
-  //    For a match, we'll consider http(s):// OR www. pattern with no extra text.
-  const isJustUrl = (text = '') =>
-    /^(https?:\/\/[^\s]+|www\.[^\s]+)$/i.test(text.trim());
-
+  // 1. Filter out any post that is just a URL
+  const isJustUrl = (text = '') => /^(https?:\/\/[^\s]+|www\.[^\s]+)$/i.test(text.trim());
   const filtered = combined.filter((post) => {
-    if (!post?.text) return false; // no text at all
+    if (!post?.text) return false;
     return !isJustUrl(post.text);
   });
 
-  // 2. Deduplicate by text (case-sensitive).
-  //    If you want it case-insensitive, you could lowercase before comparing.
-  const unique = filtered.filter((post, idx, self) =>
-    idx === self.findIndex((p) => p.text === post.text)
+  // 2. Deduplicate by text (case-sensitive)
+  const unique = filtered.filter(
+    (post, idx, self) => idx === self.findIndex((p) => p.text === post.text)
   );
 
-  // 3. Return the first 33 items if you want to limit the array size.
+  // 3. Limit array size if desired
   return unique.slice(0, 33);
 }
 
-// --------------------------------------------------
-// The main class
-// --------------------------------------------------
-let pollingTimeout;
+/**
+ * Main TwitterService class
+ */
+let pollingTimeout; // For mention polling
 
 export class TwitterService {
   constructor() {
@@ -94,28 +86,35 @@ export class TwitterService {
     this.lastDailyReset = new Date();
     this.lastMonthlyReset = new Date();
 
+    // Track usage for ratio-limited tweeting
     this.dailyPostsUsed = 0;
     this.dailyRepliesUsed = 0;
-
-    // Ratios used in your code
     this.dailyPostRatio = 0.2;  // 20% new tweets
     this.dailyReplyRatio = 0.8; // 80% replies
 
     this.userCache = {
       userId: null,
       lastFetched: 0,
-      ttl: 5 * 60 * 1000 // 5 minutes
+      ttl: 5 * 60 * 1000, // 5 minutes
     };
+
+    // Keep track of posted NFTs by mint
+    this.postedNFTs = new Set();
   }
 
-  // Static initializer: sets up DB, metrics, authentication, etc.
+  /**
+   * Static init: sets up DB, metrics, authentication, etc.
+   */
   static async initialize() {
     const service = new TwitterService();
-    await service.initializeMongo(); // initialize your DB
+    await service.initializeMongo();
     service.metrics = new Metrics(service.db);
-    setInterval(() => service.metrics.saveMetrics(), 3600000);
+    setInterval(() => service.metrics.saveMetrics(), 3600000); // Hourly metrics update
 
+    // OAuth
     await service.authenticate();
+
+    // Load last mention
     await service.loadLastProcessedMentionId();
     return service;
   }
@@ -124,7 +123,6 @@ export class TwitterService {
     await initializeMongo(this);
   }
 
-  // OAuth
   async authenticate() {
     try {
       const credentials = await credentialService.getValidCredentials();
@@ -141,16 +139,17 @@ export class TwitterService {
           await credentialService.storeCredentials({
             accessToken: token.accessToken,
             refreshToken: token.refreshToken,
-            expiresIn: token.expiresIn ?? 7200
+            expiresIn: token.expiresIn ?? 7200,
           });
         },
         onTokenRefreshError: (err) => {
           console.error('Token refresh error:', err);
-        }
+        },
       });
 
+      // Create read-write client
       this.rwClient = new TwitterApi(credentials.accessToken, {
-        plugins: [rateLimitPlugin, autoRefresherPlugin]
+        plugins: [rateLimitPlugin, autoRefresherPlugin],
       });
       return true;
     } catch (error) {
@@ -159,7 +158,6 @@ export class TwitterService {
     }
   }
 
-  // For storing new tokens if we get them
   async storeTokens(accessToken, refreshToken, expiresIn) {
     try {
       await credentialService.storeCredentials({ accessToken, refreshToken, expiresIn });
@@ -168,28 +166,36 @@ export class TwitterService {
     }
   }
 
-  // Reuse your existing storeTweet function from TwitterMongo or directly:
   async storeTweet(tweet) {
     await storeTweet(this, tweet);
   }
 
-  // Example searchContext
+  /**
+   * Example "searchContext" method:
+   * - splits text into keywords,
+   * - looks for those in the DB
+   * - or matches author_id
+   */
   async searchContext(text, authorId) {
-    const keywords = text.split(/\s+/).filter(word => word.length > 3);
+    const keywords = text.split(/\s+/).filter((word) => word.length > 3);
     const keywordRegex = new RegExp(
-      keywords.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+      keywords.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
       'i'
     );
 
-    return await this.tweetsCollection.find({
-      $or: [
-        { text: keywordRegex },
-        { author_id: authorId }
-      ],
-    }).toArray();
+    return this.tweetsCollection
+      .find({
+        $or: [
+          { text: keywordRegex },
+          { author_id: authorId },
+        ],
+      })
+      .toArray();
   }
 
-  // Resets counters at midnight or month boundary
+  /**
+   * Resets counters daily and monthly
+   */
   resetCountersIfNeeded() {
     const now = new Date();
     if (now.getDate() !== this.lastDailyReset.getDate()) {
@@ -204,7 +210,9 @@ export class TwitterService {
     }
   }
 
-  // Generic helper to store images, etc.
+  /**
+   * Post an image to Twitter
+   */
   async postImage(imageBuffer) {
     this.resetCountersIfNeeded();
     if (this.dailyPosts >= this.dailyPostLimit) {
@@ -212,12 +220,14 @@ export class TwitterService {
       return null;
     }
     try {
+      // A separate client is used for v1 media upload
       const uploadClient = new TwitterApi({
         appKey: process.env.X_API_KEY,
         appSecret: process.env.X_API_SECRET,
         accessToken: process.env.X_ACCESS_TOKEN,
         accessSecret: process.env.X_ACCESS_TOKEN_SECRET,
       });
+
       const mediaId = await this.retryFetch(() =>
         uploadClient.v1.uploadMedia(Buffer.from(imageBuffer), { mimeType: 'image/png' })
       );
@@ -232,13 +242,16 @@ export class TwitterService {
     }
   }
 
-  // Standard "post a tweet" flow
+  /**
+   * Post a text (or image) tweet
+   */
   async postTweet(content) {
     this.resetCountersIfNeeded();
     if (this.dailyPosts >= this.dailyPostLimit) {
       console.log('Daily post limit reached.');
       return null;
     }
+
     const maxDailyPosts = Math.floor(this.dailyPostLimit * this.dailyPostRatio);
     if (this.dailyPostsUsed >= maxDailyPosts) {
       console.log('Daily post ratio reached.');
@@ -246,27 +259,30 @@ export class TwitterService {
     }
 
     try {
+      // If the content is an image buffer
       if (content.type === 'image') {
-        // If content includes an image buffer
         const mediaId = await this.uploadImageToS3(content.content);
         const imageResponse = await this.rwClient.v2.tweet({ media: { media_ids: [mediaId] } });
-        // Optional: If you also have text in `content.prompt`, post it as reply
+
+        // If there's text in prompt, post it as a reply
         if (content.prompt) {
           await this.rwClient.v2.reply({ text: content.prompt }, imageResponse.data.id);
         }
         return imageResponse;
       }
 
-      // content.type === 'text'
+      // Otherwise, text-based
       const tweetPayload = { text: content.content };
       const response = await this.rwClient.v2.tweet(tweetPayload);
 
+      // Store in DB
       await this.storeTweet({
         id: response.data.id,
         text: content.content,
         author_id: await this.getCachedUserId(),
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
       });
+
       this.dailyPostsUsed += 1;
       return response;
     } catch (error) {
@@ -275,38 +291,49 @@ export class TwitterService {
     }
   }
 
-  // Helper to upload to S3, then upload to Twitter
+  /**
+   * Helper to upload an image to S3, then Twitter.
+   */
   async uploadImageToS3(imageBuffer) {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const tempFilePath = path.join(__dirname, 'temp_image.png');
+
+    // Synchronous write, then later remove
     fs.writeFileSync(tempFilePath, imageBuffer);
 
     try {
       const imageUrl = await uploadImage(tempFilePath);
       console.log('Image uploaded to S3 successfully:', imageUrl);
 
-      // Upload to Twitter
+      // Then upload to Twitter
       const uploadClient = new TwitterApi({
         appKey: process.env.X_API_KEY,
         appSecret: process.env.X_API_SECRET,
         accessToken: process.env.X_ACCESS_TOKEN,
         accessSecret: process.env.X_ACCESS_TOKEN_SECRET,
       });
-      const mediaId = await uploadClient.v1.uploadMedia(Buffer.from(imageBuffer), { mimeType: 'image/png' });
-      console.log('Image uploaded to Twitter as media ID:', mediaId);
+      const mediaId = await uploadClient.v1.uploadMedia(Buffer.from(imageBuffer), {
+        mimeType: 'image/png',
+      });
+      console.log('Image uploaded to Twitter. Media ID:', mediaId);
 
       return mediaId;
     } catch (error) {
-      console.error('Error uploading image to S3:', error);
+      console.error('Error uploading image to S3/Twitter:', error);
       throw error;
     } finally {
+      // Clean up local file
       fs.unlinkSync(tempFilePath);
     }
   }
 
+  /**
+   * Reply to a tweet
+   */
   async replyToTweet(tweetId, content) {
     this.resetCountersIfNeeded();
     const maxDailyReplies = Math.floor(this.dailyPostLimit * this.dailyReplyRatio);
+
     if (this.dailyRepliesUsed >= maxDailyReplies) {
       console.log('Daily reply ratio reached.');
       return null;
@@ -314,7 +341,6 @@ export class TwitterService {
 
     try {
       if (content.type === 'image') {
-        // If content is an image buffer
         const mediaId = await this.uploadImageToS3(content.content);
         const response = await this.retryFetch(() =>
           this.rwClient.v2.reply({ text: content.prompt || '', media: { media_ids: [mediaId] } }, tweetId)
@@ -323,17 +349,17 @@ export class TwitterService {
           id: response.data.id,
           text: content.prompt || 'Image reply',
           author_id: await this.getCachedUserId(),
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
         });
         this.dailyRepliesUsed += 1;
         return response;
       }
 
-      // content.type === 'text'
       if (!content.content) {
         console.error('No content provided for reply');
         return null;
       }
+
       const response = await this.retryFetch(() =>
         this.rwClient.v2.reply(content.content, tweetId)
       );
@@ -341,7 +367,7 @@ export class TwitterService {
         id: response.data.id,
         text: content.content,
         author_id: await this.getCachedUserId(),
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
       });
       this.dailyRepliesUsed += 1;
       return response;
@@ -351,7 +377,9 @@ export class TwitterService {
     }
   }
 
-  // For mention polling
+  /**
+   * lastProcessedMentionId used in mention polling
+   */
   async loadLastProcessedMentionId() {
     try {
       const record = await this.authCollection.findOne({ type: 'last_processed_mention' });
@@ -377,7 +405,10 @@ export class TwitterService {
   }
 
   async getCachedUserId() {
-    if (this.userCache.userId && (Date.now() - this.userCache.lastFetched) < this.userCache.ttl) {
+    if (
+      this.userCache.userId &&
+      Date.now() - this.userCache.lastFetched < this.userCache.ttl
+    ) {
       return this.userCache.userId;
     }
     try {
@@ -395,7 +426,9 @@ export class TwitterService {
     return pollMentionsAndReplies(this);
   }
 
-  // Example of how we handle a mention
+  /**
+   * Handle an inbound mention
+   */
   async handleMention(mention) {
     const userId = await this.getCachedUserId();
     if (mention.author_id === userId) {
@@ -403,21 +436,23 @@ export class TwitterService {
       return;
     }
 
-    // Basic: fetch context from the mention’s text + author
+    // Basic: fetch context from mention’s text + author
     const contextDocs = await this.searchContext(mention.text, mention.author_id);
-    const contextText = contextDocs.map(doc => `<tweet>${doc.text}</tweet>`).join('\n');
+    const contextText = contextDocs.map((doc) => `<tweet>${doc.text}</tweet>`).join('\n');
 
-    // Actually generate a short reply using new prompt service
-    const content = await composeTweetContent(mention.text, `Context:\n${contextText}`);
+    // Generate a short reply
+    const content = await composeTweetContent(
+      mention.text,
+      `Context:\n${contextText}`
+    );
     const reply = await this.replyToTweet(mention.id, content);
 
-    // Store the mention itself
+    // Store the mention
     await this.storeTweet({
       id: mention.id,
       text: mention.text,
       author_id: mention.author_id,
-      // If you have expansions, you could also store mention.author_username
-      created_at: mention.created_at
+      created_at: mention.created_at,
     });
 
     // Mark mention as processed
@@ -425,7 +460,10 @@ export class TwitterService {
     return reply;
   }
 
-
+  /**
+   * Example method to fetch relevant posts
+   * from Twitter (API) or fallback to DB.
+   */
   async fetchRelevantPosts() {
     this.resetCountersIfNeeded();
     if (this.monthlyReads >= this.monthlyReadLimit) {
@@ -438,52 +476,48 @@ export class TwitterService {
         this.rwClient.v2.userTimeline(userId, {
           max_results: 5,
           expansions: ['author_id'],
-          'user.fields': ['username']
+          'user.fields': ['username'],
         })
       );
-  
+
       if (timeline?.data?.data?.length) {
         const userMap = new Map();
-        (timeline.includes?.users || []).forEach(u => {
+        (timeline.includes?.users || []).forEach((u) => {
           userMap.set(u.id, u.username);
         });
-  
-        const storedTweets = await this.fetchRelevantPostsFromDB(); // Fetch existing stored tweets
+
+        const storedTweets = await this.fetchRelevantPostsFromDB();
         const uniqueTweets = [];
-  
+
         for (const tweet of timeline.data.data) {
-          const isDuplicate = storedTweets.some(stored => {
+          const isDuplicate = storedTweets.some((stored) => {
             const similarity = fuzzball.ratio(stored.text, tweet.text);
-            return similarity > 80; // Similarity threshold
+            return similarity > 80; // 80% similarity threshold
           });
-  
           if (!isDuplicate) {
             const tweetData = {
               id: tweet.id,
               text: tweet.text,
               author_id: tweet.author_id,
               author_username: userMap.get(tweet.author_id) || null,
-              created_at: tweet.created_at
+              created_at: tweet.created_at,
             };
             await this.storeTweet(tweetData);
             uniqueTweets.push(tweetData);
           }
         }
-  
         this.monthlyReads++;
         return uniqueTweets;
       }
-  
-      console.log('Falling back to DB for relevant posts');
+
+      console.log('Falling back to DB for relevant posts...');
       return await this.fetchRelevantPostsFromDB();
     } catch (error) {
-      console.error('Error fetching posts from API:', error);
-      console.log('Falling back to DB for relevant posts');
+      console.error('Error fetching posts from Twitter API:', error);
+      console.log('Falling back to DB for relevant posts...');
       return await this.fetchRelevantPostsFromDB();
     }
   }
-  
-  
 
   // DB fallback
   async fetchRelevantPostsFromDB() {
@@ -499,7 +533,9 @@ export class TwitterService {
     }
   }
 
-  // Basic helper to handle rate-limit retries
+  /**
+   * Basic method to handle rate-limit with up to 3 retries
+   */
   async retryFetch(fetchFunction, maxRetries = 3) {
     let lastError;
     for (let i = 0; i < maxRetries; i++) {
@@ -508,18 +544,18 @@ export class TwitterService {
       } catch (error) {
         lastError = error;
         if (error.code === 429 && error.rateLimit?.reset) {
-          const waitTime = (error.rateLimit.reset * 1000) - Date.now() + 1000;
+          // Wait until reset
+          const waitTime = error.rateLimit.reset * 1000 - Date.now() + 1000;
           console.log(`Rate limit; waiting ${waitTime / 1000}s before retry.`);
-          await new Promise(res => setTimeout(res, waitTime));
+          await new Promise((res) => setTimeout(res, waitTime));
         } else {
-          // Not a rate limit or missing .rateLimit data
           if (i >= maxRetries - 1) throw lastError;
         }
       }
     }
   }
 
-  // Possibly store rate-limit info in DB if you want
+  // Store rate-limit info if you want
   async storeRateLimit(info) {
     try {
       await this.db.collection('rate_limits').updateOne(
@@ -529,8 +565,8 @@ export class TwitterService {
             reset: info.reset,
             limit: info.limit,
             remaining: info.remaining,
-            updated_at: new Date()
-          }
+            updated_at: new Date(),
+          },
         },
         { upsert: true }
       );
@@ -539,41 +575,50 @@ export class TwitterService {
     }
   }
 
-  // Summarize recent posts
+  /**
+   * Summarize recent posts + an optional wallet asset report
+   */
   async composePost(systemPrompt, memoryPrompt, context) {
     try {
       const relevantPosts = await this.fetchRelevantPosts();
-      if (!Array.isArray(relevantPosts) || relevantPosts.length === 0) {
-        console.warn('No relevant posts found, using default “interesting thought” prompt.');
+      if (!relevantPosts?.length) {
+        console.warn('No relevant posts found; using default prompt.');
         return await composeTweetContent('Share an interesting thought');
       }
 
       const formattedPosts = relevantPosts
-        .filter(p => p?.text)
-        .map(p => `Post: ${p.text}`)
+        .filter((p) => p?.text)
+        .map((p) => `Post: ${p.text}`)
         .join('\n');
 
-      // Possibly use your own specialized summarizer:
-      // e.g. using aiHandler.generateResponse(...) if you want.
+      // Attempt to read a wallet asset report (optional)
+      const __dirname = path.dirname(fileURLToPath(import.meta.url));
+      const reportPath = path.join(__dirname, '../../nft_images/x.md');
+      let reportContent = '';
+      try {
+        reportContent = await fsPromises.readFile(reportPath, 'utf8');
+      } catch (error) {
+        console.warn('Wallet asset report not found:', error);
+      }
+
       const summaryPrompt = `
 System: ${systemPrompt}
 Memory: ${memoryPrompt}
 Context: ${context}
+Wallet Asset Report:
+${reportContent}
 Here are some recent posts:
 ${formattedPosts}
 Please summarize and produce a short tweet.
-`;
+      `;
 
       const shortTweet = await composeTweetContent(summaryPrompt);
-      // shortTweet => { type: 'text', content: '...' }
-
-      // If you want to parse out mentions or something:
       const mentionMatches = shortTweet.content?.match(/@[a-zA-Z0-9_]+/g) || [];
-      const mentions = mentionMatches.map(h => h.slice(1));
+      const mentions = mentionMatches.map((h) => h.slice(1));
 
       return {
         content: shortTweet.content,
-        entities: { mentions }
+        entities: { mentions },
       };
     } catch (error) {
       console.error('Error in composePost:', error);
@@ -581,6 +626,29 @@ Please summarize and produce a short tweet.
     }
   }
 
+  /**
+   * Post an NFT image if not previously posted
+   */
+  async postNFTImage(nft) {
+    if (this.postedNFTs.has(nft.mint)) {
+      console.log(`NFT ${nft.mint} has already been posted.`);
+      return null;
+    }
+    try {
+      const imageBuffer = await fsPromises.readFile(nft.localImagePath);
+      const mediaId = await this.uploadImageToS3(imageBuffer);
+      const response = await this.rwClient.v2.tweet({ media: { media_ids: [mediaId] } });
+      this.postedNFTs.add(nft.mint);
+      return response;
+    } catch (error) {
+      console.error('Error posting NFT image:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Example method for repeated requests with rate-limit handling
+   */
   async makeRequest(endpoint, apiCall) {
     try {
       const response = await apiCall();
@@ -594,6 +662,9 @@ Please summarize and produce a short tweet.
     }
   }
 
+  /**
+   * Generate an image description from recent posts (demo usage of LLM).
+   */
   async generateImageDescription() {
     try {
       const memories = await this.fetchRelevantPosts();
@@ -601,13 +672,15 @@ Please summarize and produce a short tweet.
         console.error('Error: fetchRelevantPosts did not return an array');
         return null;
       }
-      const memoryText = memories.map(m => m.text).join('\n');
-      // You can also adapt your new prompt system or do a direct LLM call:
+      const memoryText = memories.map((m) => m.text).join('\n');
       const prompt = `
 Based on these memories, generate a creative, engaging description for an image:
 ${memoryText}
-`;
-      const { success, tweet, error } = await generateTweet(prompt, '', { maxAttempts: 5, maxLength: 600 });
+      `;
+      const { success, tweet, error } = await generateTweet(prompt, '', {
+        maxAttempts: 5,
+        maxLength: 600,
+      });
       if (!success) {
         console.error('Error generating image description:', error);
         return null;
@@ -628,9 +701,9 @@ ${memoryText}
   }
 }
 
-// --------------------------------------------------
-// Polling Setup & Export
-// --------------------------------------------------
+/**
+ * Sets up mention polling on an interval
+ */
 async function setupPolling(service) {
   let error = null;
   try {
@@ -643,23 +716,47 @@ async function setupPolling(service) {
       console.error('Polling error:', error);
     }
   } finally {
-    const nextInterval = error?.code === 429
-      ? Math.min(service.pollingInterval * 2, 3600000) // cap at 1 hour
-      : service.pollingInterval;
+    const nextInterval =
+      error?.code === 429
+        ? Math.min(service.pollingInterval * 2, 3600000) // cap at 1 hour
+        : service.pollingInterval;
 
     pollingTimeout = setTimeout(() => setupPolling(service), nextInterval);
   }
 }
 
+/**
+ * Cleanup function if needed
+ */
 export function cleanup() {
   if (pollingTimeout) {
     clearTimeout(pollingTimeout);
   }
 }
 
-// Initialize at the bottom
-await credentialService.initialize(process.env.MONGODB_URI);
-const twitterService = await TwitterService.initialize();
-setupPolling(twitterService);
+/**
+ * The main entry flow: 
+ * 1) Initialize credential service & DB 
+ * 2) Initialize TwitterService 
+ * 3) Start mention polling
+ */
+// We'll export this at the bottom
+let twitterService; // Holds the initialized service
 
-export default twitterService;
+export async function initTwitterService() {
+  try {
+    // Initialize credentials
+    await credentialService.initialize(process.env.MONGODB_URI);
+
+    // Create new service if not yet created
+    if (!twitterService) {
+      twitterService = await TwitterService.initialize();
+      setupPolling(twitterService);
+      console.log('TwitterService initialized successfully.');
+    }
+    return twitterService;
+  } catch (error) {
+    console.error('Fatal error in TwitterService init:', error);
+    throw error;
+  }
+}

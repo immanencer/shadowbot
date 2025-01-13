@@ -79,6 +79,10 @@ class AIHandler {
         const result = await fetchFunction();
         return result;
       } catch (error) {
+        if (error.message.includes('HTTP 404')) {
+          logger.error('Fetch failed: Endpoint not found', { error: error.message });
+          throw error;
+        }
         if (attempt === maxRetries) {
           logger.error(`Fetch failed after ${maxRetries} attempts`, { error: error.message });
           throw error;
@@ -101,6 +105,9 @@ class AIHandler {
         Authorization: `Bearer ${config.OPENAI_API_KEY}`,
       },
     });
+    if (response.status === 404) {
+      throw new Error('Key info fetch failed: HTTP 404 - Endpoint not found');
+    }
     if (!response.ok) {
       throw new Error(`Key info fetch failed: HTTP ${response.status}`);
     }
@@ -240,7 +247,7 @@ class AIHandler {
             frequency_penalty: 0.5,
             presence_penalty: 0.5,
             max_tokens: 128,
-            stop: ['</tweet>'],
+            stop: ['\n\n'],
           }),
         }).then((response) => {
           if (!response.ok) {

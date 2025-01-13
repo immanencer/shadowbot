@@ -4,3 +4,4 @@ node_modules*
 privateKey.pem
 *.png
 sqlite-*
+nft_images

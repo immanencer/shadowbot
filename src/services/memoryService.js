@@ -17,6 +17,9 @@ export async function getMongoClient() {
 
 export async function fetchMemory(queryText) {
   await getMongoClient();
+  if (!collection) {
+    throw new Error('Collection is not initialized');
+  }
   const results = await collection.find({ $text: { $search: queryText } }).limit(100).toArray();
   return { documents: results };
 }

@@ -14,20 +14,25 @@ const systemPrompt = fs.readFileSync('system_prompt.md', 'utf8');
  * @param {number} maxLength - Desired max length for the final tweet text.
  * @returns {string} The full prompt to pass to aiHandler.
  */
-async function buildPrompt(userInput, context = '', maxLength = 600) {
+async function buildPrompt(userInput) {
   console.log('Simplified prompt:', userInput);
 
-  // Fetch memory from ChromaDB
-  const memoryResults = await fetchMemory(userInput);
-  const memoryText = memoryResults.documents?.flat().join('\n') || '';
+  try {
+    // Fetch memory from ChromaDB
+    const memoryResults = await fetchMemory(userInput);
+    const memoryText = memoryResults?.documents?.flat().join('\n') || '';
 
-  // Combine systemPrompt, possible dream, and user input
-  return `${systemPrompt.trim()}
+    // Combine systemPrompt, possible dream, and user input
+    return `${systemPrompt.trim()}
 
 ${memoryText}
 
 ${userInput}
 `.trim();
+  } catch (error) {
+    console.error('Failed to fetch memory', { error: error.message });
+    throw error;
+  }
 }
 
 /**
@@ -46,9 +51,8 @@ export async function generateTweet(userInput, context = '', options = {}) {
   console.log('Prompt:', prompt); 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const raw = await aiHandler.generateCompletion(prompt, { stop: ["</tweet>"] });
+      const raw = await aiHandler.generateCompletion(prompt, { stop: ["\n\n"] });
       let tweetText = raw.trim();
-      tweetText = tweetText.replace(/^(@\w+\s*)+/, '').trim();
       if (tweetText.length > maxLength) {
         console.warn(`Attempt ${attempt}: Tweet is too long (${tweetText.length} chars).`);
         continue; // retry
