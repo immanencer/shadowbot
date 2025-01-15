@@ -332,8 +332,10 @@ async function processWallets() {
   console.log('\n[INFO] All wallets processed successfully.');
 }
 
+export function updateSolanaAssets () {
 // Invoke main process
 processWallets().catch(error => {
   console.error('[FATAL] Unexpected error during processing:', error);
   process.exit(1);
 });
+}

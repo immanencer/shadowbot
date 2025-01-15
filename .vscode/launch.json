@@ -5,8 +5,8 @@
     "version": "0.2.0",
     "configurations": [
     {
-        "name": "Update Solana Assets",
-        "program": "${workspaceFolder}/src/services/solanaAssets.js",
+        "name": "generateDailyNews",
+        "program": "${workspaceFolder}/src/services/generateDailyNews.js",
         "request": "launch",
         "skipFiles": [
             "<node_internals>/**"

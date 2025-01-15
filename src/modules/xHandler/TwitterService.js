@@ -474,7 +474,7 @@ export class TwitterService {
       const userId = await this.getCachedUserId();
       const timeline = await this.retryFetch(() =>
         this.rwClient.v2.userTimeline(userId, {
-          max_results: 5,
+          max_results: 20, // Increased from 5
           expansions: ['author_id'],
           'user.fields': ['username'],
         })
@@ -486,7 +486,7 @@ export class TwitterService {
           userMap.set(u.id, u.username);
         });
 
-        const storedTweets = await this.fetchRelevantPostsFromDB();
+        const storedTweets = await this.fetchRelevantPostsFromDB(20);
         const uniqueTweets = [];
 
         for (const tweet of timeline.data.data) {
@@ -520,12 +520,12 @@ export class TwitterService {
   }
 
   // DB fallback
-  async fetchRelevantPostsFromDB() {
+  async fetchRelevantPostsFromDB(limit = 5) {
     try {
       return await this.tweetsCollection
         .find({})
         .sort({ created_at: -1 })
-        .limit(5)
+        .limit(limit) // Use provided limit
         .toArray();
     } catch (error) {
       console.error('Error fetching posts from DB:', error);

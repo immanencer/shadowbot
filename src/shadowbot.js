@@ -8,7 +8,6 @@ import analytics from './analytics.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { ChromaClient } from 'chromadb';
 
 let NEXT_UPDATE_TIME = 0;
 
@@ -51,9 +50,7 @@ class VoidGoblinBot {
     this.setupEventListeners();
     this._messageHashes = new Set(); // Renamed from _hashes for clarity
     this._hashCleanupInterval = setInterval(() => this._messageHashes.clear(), 3600000); // Cleanup every hour
-    this.chromaClient = new ChromaClient();
     this.collection = null;
-    this.initializeChromaDB();
   }
 
   loadOrGeneratePrivateKey() {
@@ -228,12 +225,6 @@ class VoidGoblinBot {
     return chunks;
   }
 
-  async initializeChromaDB() {
-    this.collection = await this.chromaClient.getOrCreateCollection({
-      name: 'void_goblin_memory',
-    });
-  }
-
   async loadMemory() {
     try {
       const results = await this.collection.query({
@@ -242,7 +233,6 @@ class VoidGoblinBot {
       });
       if (results.documents.length > 0) {
         this.memory = JSON.parse(results.documents[0][0]);
-        logger.info('Memory loaded from ChromaDB');
       } else {
         logger.info('No existing memory found, starting with fresh memory');
       }
@@ -277,7 +267,6 @@ class VoidGoblinBot {
         documents: [JSON.stringify(this.memory)],
         ids: ['memory'],
       });
-      logger.info('Memory saved to ChromaDB');
     } catch (error) {
       logger.error('Error saving memory', { error });
     }

@@ -81,8 +81,6 @@ app.listen(port, async () => {
       return;
     }
 
-    console.log('ChromaDB collection ready');
-
   } catch (error) {
     console.error('Error during server initialization:', error);
   }

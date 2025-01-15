@@ -3,6 +3,7 @@ import fs from 'fs';
 import aiHandler from '../aiHandler.js';
 import { fetchMemory, storeMemory } from '../services/memoryService.js';
 import path from 'path';
+import Exa from 'exa-js';
 
 // Load your system prompt from disk (includes persona, instructions, etc.)
 const systemPrompt = (() => {
@@ -36,14 +37,34 @@ async function buildPrompt(userInput) {
   console.log('Simplified prompt:', userInput);
 
   try {
-    // Fetch memory from ChromaDB
     const memoryResults = await fetchMemory(userInput);
     const memoryText = memoryResults?.documents?.flat().join('\n') || '';
+
+    let exaResults = '';
+    if (process.env.EXA_KEY) {
+      try {
+        const exa = new Exa(process.env.EXA_KEY);
+        const exaResponse = await exa.search({
+          query: userInput,
+          type: 'neural',
+          useAutoprompt: true,
+          numResults: 5
+        });
+        exaResults = exaResponse?.results
+          ?.map((r) => `- ${r.title || 'Untitled'}`)
+          .join('\n') || '';
+      } catch (error) {
+        console.error('Exa search error:', error.message);
+      }
+    }
 
     // Combine systemPrompt, possible dream, and user input
     return `${systemPrompt.trim()}
 
 ${memoryText}
+
+EXA SEARCH RESULTS:
+${exaResults}
 
 ${userInput}
 `.trim();
