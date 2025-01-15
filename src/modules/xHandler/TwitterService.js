@@ -636,8 +636,12 @@ Please summarize and produce a short tweet.
     }
     try {
       const imageBuffer = await fsPromises.readFile(nft.localImagePath);
+      const fileName = path.basename(nft.localImagePath);
       const mediaId = await this.uploadImageToS3(imageBuffer);
-      const response = await this.rwClient.v2.tweet({ media: { media_ids: [mediaId] } });
+
+      // Include filename and any context data in the tweet
+      const tweetText = `Here's a new NFT: ${nft.name || 'Unknown'}\nMint: ${nft.mint}\nFile: ${fileName}`;
+      const response = await this.rwClient.v2.tweet({ text: tweetText, media: { media_ids: [mediaId] } });
       this.postedNFTs.add(nft.mint);
       return response;
     } catch (error) {

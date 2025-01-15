@@ -2,9 +2,27 @@
 import fs from 'fs';
 import aiHandler from '../aiHandler.js';
 import { fetchMemory, storeMemory } from '../services/memoryService.js';
+import path from 'path';
 
 // Load your system prompt from disk (includes persona, instructions, etc.)
-const systemPrompt = fs.readFileSync('system_prompt.md', 'utf8');
+const systemPrompt = (() => {
+  try {
+    let promptText = (() => {
+      try { return fs.readFileSync('system_prompt.md', 'utf8'); }
+      catch (error) { return ''; }
+    })();
+    const nftDir = path.resolve('./nft_images');
+    const mdFiles = fs.readdirSync(nftDir).filter((file) => file.endsWith('.md'));
+    for (const file of mdFiles) {
+      const mdContent = fs.readFileSync(path.join(nftDir, file), 'utf8');
+      promptText += `\n\n${mdContent}`;
+    }
+    return promptText;
+  } catch (error) {
+    console.error('Failed to load system prompt:', error);
+    return '';
+  }
+})();
 
 /**
  * Builds a simplified prompt using systemPrompt, dreams, context, and user input.
@@ -53,6 +71,35 @@ export async function generateTweet(userInput, context = '', options = {}) {
     try {
       const raw = await aiHandler.generateCompletion(prompt, { stop: ["\n\n"] });
       let tweetText = raw.trim();
+
+      // Remove duplicate lines
+      let lines = tweetText.split('\n');
+      lines = lines.filter((line, idx) => lines.indexOf(line) === idx);
+      tweetText = lines.join('\n');
+
+      // Filter out URLs
+      tweetText = tweetText.replace(/https?:\/\/\S+/gi, '');
+
+      // Filter out ETH addresses
+      tweetText = tweetText.replace(/0x[a-fA-F0-9]{40}/gi, '');
+
+      // Filter out Sol addresses
+      tweetText = tweetText.replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, '');
+
+      // Deduplicate tags and keep only the first one
+      const tagMatches = tweetText.match(/@[a-zA-Z0-9_]+/g) || [];
+      const distinctTags = [];
+      for (const t of tagMatches) {
+        if (!distinctTags.includes(t)) {
+          distinctTags.push(t);
+        }
+      }
+      if (distinctTags.length > 1) {
+        for (let i = 1; i < distinctTags.length; i++) {
+          tweetText = tweetText.replace(new RegExp(distinctTags[i], 'g'), distinctTags[i].replace('@', ''));
+        }
+      }
+
       if (tweetText.length > maxLength) {
         console.warn(`Attempt ${attempt}: Tweet is too long (${tweetText.length} chars).`);
         continue; // retry

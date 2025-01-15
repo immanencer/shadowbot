@@ -284,10 +284,12 @@ function createMarkdownReport(walletAddress, nfts) {
   if (nftsOnly.length > 0) {
     report += `## NFTs\n\n`;
     nftsOnly.forEach((nft, idx) => {
+      const fileName = nft.localImagePath ? nft.localImagePath.split('/').pop() : 'Unknown';
       report += `**NFT ${idx + 1}:** ${nft.name || 'Unnamed NFT'}\n\n`;
       report += `- Mint: \`${nft.mint}\`\n`;
       report += `- Description: ${nft.description || 'N/A'}\n`;
       report += `- Image URL: ${nft.image || 'N/A'}\n`;
+      report += `- File: \`${fileName}\`\n`;
       report += `\n`;
     });
   } else {
